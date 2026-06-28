@@ -250,15 +250,41 @@ function FilebrowserPlus:start()
         return
     end
 
+    -- Android workaround: /storage/emulated/0/ is mounted noexec, copy binary to /data/local/tmp/
+    local exec_bin_path = bin_path
+    local tmp_bin_path = "/data/local/tmp/filebrowser_fbplus"
+    local is_android = Device:isAndroid()
+    if is_android then
+        diagLog("INFO", "Android detected, copying binary to executable path: %s", tmp_bin_path)
+        local cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
+        local cp_status = os.execute(cp_cmd)
+        if cp_status == 0 and util.pathExists(tmp_bin_path) then
+            exec_bin_path = tmp_bin_path
+            diagLog("INFO", "Binary copied to %s successfully.", tmp_bin_path)
+        else
+            diagLog("WARN", "Failed to copy binary to %s (status: %s). Trying original path.", tmp_bin_path, tostring(cp_status))
+            -- Try /tmp as fallback
+            tmp_bin_path = "/tmp/filebrowser_fbplus"
+            cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
+            cp_status = os.execute(cp_cmd)
+            if cp_status == 0 and util.pathExists(tmp_bin_path) then
+                exec_bin_path = tmp_bin_path
+                diagLog("INFO", "Binary copied to %s successfully (fallback).", tmp_bin_path)
+            else
+                diagLog("WARN", "Fallback copy also failed. Will try running from original path.")
+            end
+        end
+    end
+
     -- Pre-flight checks: binary executable
-    local test_exec_cmd = "test -x '" .. bin_path .. "'"
+    local test_exec_cmd = "test -x '" .. exec_bin_path .. "'"
     if os.execute(test_exec_cmd) ~= 0 then
         diagLog("WARN", "Binary not executable, trying chmod +x...")
-        local chmod_status = os.execute("chmod +x " .. bin_path)
+        local chmod_status = os.execute("chmod +x " .. exec_bin_path)
         if chmod_status ~= 0 then
             showScreenError(T(
                 _("FilebrowserPlus cannot start!\n\nBinary is not executable and chmod failed:\n%1\n\nExit code: %2\n\nThe file system may be read-only."),
-                bin_path, tostring(chmod_status)), 20)
+                exec_bin_path, tostring(chmod_status)), 20)
             return
         end
         diagLog("INFO", "chmod +x succeeded.")
@@ -266,7 +292,7 @@ function FilebrowserPlus:start()
 
     -- Pre-flight checks: binary can actually run (test with "version" command)
     diagLog("INFO", "Testing binary execution with 'version' command...")
-    local test_status, test_output = executeWithOutput(bin_path .. " version")
+    local test_status, test_output = executeWithOutput(exec_bin_path .. " version")
     diagLog("INFO", "Binary test exit status: %s, output: %s", tostring(test_status), test_output)
     if test_status ~= 0 then
         local arch_info = ""
@@ -275,11 +301,17 @@ function FilebrowserPlus:start()
             arch_info = f:read("*l") or _("unknown")
             f:close()
         end
+        local exec_note = ""
+        if is_android and exec_bin_path == bin_path then
+            exec_note = _("\n\nNote: On Android, binaries cannot run from /storage/emulated/0/ (sdcard).\nThe plugin tried to copy the binary to /data/local/tmp/ but failed.\nYou may need to manually place the binary in an executable location.")
+        end
         showScreenError(T(
-            _("FilebrowserPlus cannot start!\n\nThe filebrowser binary failed to execute.\n\nExit code: %1\nOutput: %2\n\nDevice architecture: %3\n\nThe binary may be incompatible with your device.\nTry replacing it with the correct architecture from:\nhttps://github.com/filebrowser/filebrowser/releases\n\nLog: %4"),
+            _("FilebrowserPlus cannot start!\n\nThe filebrowser binary failed to execute.\n\nExit code: %1\nOutput: %2\n\nDevice architecture: %3\nExecuting from: %4%5\n\nLog: %6"),
             tostring(test_status),
             test_output ~= "" and test_output or _("(empty - binary may be missing or corrupt)"),
             arch_info,
+            exec_bin_path,
+            exec_note,
             log_path), 30)
         return
     end
@@ -311,24 +343,24 @@ function FilebrowserPlus:start()
         end
     end
 
-    -- Configure auth method
+    -- Configure auth method (use exec_bin_path for Android)
     if self.allow_no_password then
         local disable_auth_cmd = string.format("%s -d %s -c %s config set --auth.method=noauth",
-            bin_path, db_path, config_path)
+            exec_bin_path, db_path, config_path)
         diagLog("INFO", "Disabling auth. Running: %s", disable_auth_cmd)
         local auth_status, auth_output = executeWithOutput(disable_auth_cmd)
         diagLog("INFO", "config set noauth status: %s, output: %s", tostring(auth_status), auth_output)
     else
         local enable_auth_cmd = string.format("%s -d %s -c %s config set --auth.method=json",
-            bin_path, db_path, config_path)
+            exec_bin_path, db_path, config_path)
         diagLog("INFO", "Enabling json auth. Running: %s", enable_auth_cmd)
         local auth_status, auth_output = executeWithOutput(enable_auth_cmd)
         diagLog("INFO", "config set json auth status: %s, output: %s", tostring(auth_status), auth_output)
     end
 
-    -- Build and execute the launch command
+    -- Build and execute the launch command (use exec_bin_path for Android)
     local cmd = string.format("nohup %q -a 0.0.0.0 -r %q -p %s -l %q %s & echo $! > %q",
-        bin_path, self.filebrowserplus_dataPath, self.filebrowserplus_port,
+        exec_bin_path, self.filebrowserplus_dataPath, self.filebrowserplus_port,
         log_path, filebrowser_args, pid_path)
     diagLog("INFO", "Launching filebrowser with command: %s", cmd)
 
