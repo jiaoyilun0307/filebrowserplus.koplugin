@@ -256,23 +256,34 @@ function FilebrowserPlus:start()
     -- Check if running on Android by testing if 'android' module is loadable
     local is_android = pcall(require, "android")
     if is_android then
-        diagLog("INFO", "Android detected, copying binary to executable path: %s", tmp_bin_path)
-        local cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
-        local cp_status = os.execute(cp_cmd)
-        if cp_status == 0 and util.pathExists(tmp_bin_path) then
+        -- First check if binary already exists at tmp path (e.g. pushed via adb)
+        if util.pathExists(tmp_bin_path) then
             exec_bin_path = tmp_bin_path
-            diagLog("INFO", "Binary copied to %s successfully.", tmp_bin_path)
+            diagLog("INFO", "Binary already exists at %s, using it directly.", tmp_bin_path)
         else
-            diagLog("WARN", "Failed to copy binary to %s (status: %s). Trying original path.", tmp_bin_path, tostring(cp_status))
-            -- Try /tmp as fallback
-            tmp_bin_path = "/tmp/filebrowser_fbplus"
-            cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
-            cp_status = os.execute(cp_cmd)
+            diagLog("INFO", "Android detected, copying binary to executable path: %s", tmp_bin_path)
+            local cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
+            local cp_status = os.execute(cp_cmd)
             if cp_status == 0 and util.pathExists(tmp_bin_path) then
                 exec_bin_path = tmp_bin_path
-                diagLog("INFO", "Binary copied to %s successfully (fallback).", tmp_bin_path)
+                diagLog("INFO", "Binary copied to %s successfully.", tmp_bin_path)
             else
-                diagLog("WARN", "Fallback copy also failed. Will try running from original path.")
+                diagLog("WARN", "Failed to copy binary to %s (status: %s). Trying original path.", tmp_bin_path, tostring(cp_status))
+                -- Try /tmp as fallback
+                tmp_bin_path = "/tmp/filebrowser_fbplus"
+                if util.pathExists(tmp_bin_path) then
+                    exec_bin_path = tmp_bin_path
+                    diagLog("INFO", "Binary already exists at fallback path %s.", tmp_bin_path)
+                else
+                    cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
+                    cp_status = os.execute(cp_cmd)
+                    if cp_status == 0 and util.pathExists(tmp_bin_path) then
+                        exec_bin_path = tmp_bin_path
+                        diagLog("INFO", "Binary copied to %s successfully (fallback).", tmp_bin_path)
+                    else
+                        diagLog("WARN", "Fallback copy also failed. Will try running from original path.")
+                    end
+                end
             end
         end
     end
