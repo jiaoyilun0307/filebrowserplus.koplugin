@@ -253,7 +253,8 @@ function FilebrowserPlus:start()
     -- Android workaround: /storage/emulated/0/ is mounted noexec, copy binary to /data/local/tmp/
     local exec_bin_path = bin_path
     local tmp_bin_path = "/data/local/tmp/filebrowser_fbplus"
-    local is_android = Device:isAndroid()
+    -- Check if running on Android by testing if 'android' module is loadable
+    local is_android = pcall(require, "android")
     if is_android then
         diagLog("INFO", "Android detected, copying binary to executable path: %s", tmp_bin_path)
         local cp_cmd = string.format("cp '%s' '%s' && chmod +x '%s'", bin_path, tmp_bin_path, tmp_bin_path)
