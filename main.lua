@@ -289,22 +289,34 @@ function FilebrowserPlus:start()
     end
 
     -- Pre-flight checks: binary executable
-    local test_exec_cmd = "test -x '" .. exec_bin_path .. "'"
-    if os.execute(test_exec_cmd) ~= 0 then
-        diagLog("WARN", "Binary not executable, trying chmod +x...")
-        local chmod_status = os.execute("chmod +x " .. exec_bin_path)
-        if chmod_status ~= 0 then
-            showScreenError(T(
-                _("FilebrowserPlus cannot start!\n\nBinary is not executable and chmod failed:\n%1\n\nExit code: %2\n\nThe file system may be read-only."),
-                exec_bin_path, tostring(chmod_status)), 20)
-            return
+    -- On Android, skip test -x because SELinux may block access to /data/local/tmp from app context
+    if not is_android then
+        local test_exec_cmd = "test -x '" .. exec_bin_path .. "'"
+        if os.execute(test_exec_cmd) ~= 0 then
+            diagLog("WARN", "Binary not executable, trying chmod +x...")
+            local chmod_status = os.execute("chmod +x " .. exec_bin_path)
+            if chmod_status ~= 0 then
+                showScreenError(T(
+                    _("FilebrowserPlus cannot start!\n\nBinary is not executable and chmod failed:\n%1\n\nExit code: %2\n\nThe file system may be read-only."),
+                    exec_bin_path, tostring(chmod_status)), 20)
+                return
+            end
+            diagLog("INFO", "chmod +x succeeded.")
         end
-        diagLog("INFO", "chmod +x succeeded.")
+    else
+        diagLog("INFO", "Android: skipping test -x check (SELinux may block /data/local/tmp access from app context)")
     end
 
     -- Pre-flight checks: binary can actually run (test with "version" command)
+    -- On Android, use "sh -c" to run the binary, as direct execution may be blocked by SELinux
     diagLog("INFO", "Testing binary execution with 'version' command...")
-    local test_status, test_output = executeWithOutput(exec_bin_path .. " version")
+    local version_cmd
+    if is_android then
+        version_cmd = "sh -c '" .. exec_bin_path .. " version'"
+    else
+        version_cmd = exec_bin_path .. " version"
+    end
+    local test_status, test_output = executeWithOutput(version_cmd)
     diagLog("INFO", "Binary test exit status: %s, output: %s", tostring(test_status), test_output)
     if test_status ~= 0 then
         local arch_info = ""
@@ -355,24 +367,33 @@ function FilebrowserPlus:start()
         end
     end
 
-    -- Configure auth method (use exec_bin_path for Android)
+    -- Configure auth method (use exec_bin_path for Android, wrap with sh -c)
+    local auth_bin = exec_bin_path
+    if is_android then
+        auth_bin = "sh -c '" .. exec_bin_path .. "'"
+    end
     if self.allow_no_password then
         local disable_auth_cmd = string.format("%s -d %s -c %s config set --auth.method=noauth",
-            exec_bin_path, db_path, config_path)
+            auth_bin, db_path, config_path)
         diagLog("INFO", "Disabling auth. Running: %s", disable_auth_cmd)
         local auth_status, auth_output = executeWithOutput(disable_auth_cmd)
         diagLog("INFO", "config set noauth status: %s, output: %s", tostring(auth_status), auth_output)
     else
         local enable_auth_cmd = string.format("%s -d %s -c %s config set --auth.method=json",
-            exec_bin_path, db_path, config_path)
+            auth_bin, db_path, config_path)
         diagLog("INFO", "Enabling json auth. Running: %s", enable_auth_cmd)
         local auth_status, auth_output = executeWithOutput(enable_auth_cmd)
         diagLog("INFO", "config set json auth status: %s, output: %s", tostring(auth_status), auth_output)
     end
 
     -- Build and execute the launch command (use exec_bin_path for Android)
-    local cmd = string.format("nohup %q -a 0.0.0.0 -r %q -p %s -l %q %s & echo $! > %q",
-        exec_bin_path, self.filebrowserplus_dataPath, self.filebrowserplus_port,
+    local launch_bin = exec_bin_path
+    if is_android then
+        -- On Android, wrap with sh -c to bypass SELinux restrictions on direct execution
+        launch_bin = "sh -c '" .. exec_bin_path .. "'"
+    end
+    local cmd = string.format("nohup %s -a 0.0.0.0 -r %q -p %s -l %q %s & echo $! > %q",
+        launch_bin, self.filebrowserplus_dataPath, self.filebrowserplus_port,
         log_path, filebrowser_args, pid_path)
     diagLog("INFO", "Launching filebrowser with command: %s", cmd)
 
